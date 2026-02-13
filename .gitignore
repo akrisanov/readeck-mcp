@@ -7,3 +7,6 @@
 # Editor/OS
 .DS_Store
 .vscode/
+
+# Configs
+.env

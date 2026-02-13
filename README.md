@@ -51,6 +51,6 @@ go run ./cmd/readeck-mcp
 - `internal/config/` — configuration parsing/validation
 - `docs/` — specifications and documentation
 
---
+---
 
 (C) 2026, Andrey Krisanov
