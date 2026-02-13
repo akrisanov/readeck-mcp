@@ -1,0 +1,9 @@
+# Go build output
+/bin/
+/dist/
+/*.out
+*.test
+
+# Editor/OS
+.DS_Store
+.vscode/
