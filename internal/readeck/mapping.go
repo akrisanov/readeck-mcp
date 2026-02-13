@@ -35,7 +35,7 @@ func mapBookmark(obj map[string]any) Bookmark {
 func mapLabel(obj map[string]any) Label {
 	name := firstNonEmptyString(obj, "name", "label")
 	if name == "" {
-		if s, ok := objValue(obj, "title").(string); ok {
+		if s, ok := obj["title"].(string); ok {
 			name = s
 		}
 	}
@@ -48,12 +48,12 @@ func mapLabel(obj map[string]any) Label {
 
 func mapHighlight(obj map[string]any) Highlight {
 	loc := json.RawMessage(nil)
-	if raw, ok := objValue(obj, "location").(map[string]any); ok {
+	if raw, ok := obj["location"].(map[string]any); ok {
 		if b, err := json.Marshal(raw); err == nil {
 			loc = b
 		}
 	}
-	if raw, ok := objValue(obj, "location").([]any); ok {
+	if raw, ok := obj["location"].([]any); ok {
 		if b, err := json.Marshal(raw); err == nil {
 			loc = b
 		}
@@ -204,11 +204,4 @@ func firstBool(obj map[string]any, keys ...string) bool {
 		}
 	}
 	return false
-}
-
-func objValue(obj map[string]any, key string) any {
-	if obj == nil {
-		return nil
-	}
-	return obj[key]
 }

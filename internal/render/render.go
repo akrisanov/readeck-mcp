@@ -73,13 +73,14 @@ func HighlightsMarkdown(highlights []readeck.Highlight) string {
 		return ""
 	}
 	var b strings.Builder
-	for i, h := range highlights {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
+	wrote := false
+	for _, h := range highlights {
 		text := strings.TrimSpace(h.Text)
 		if text == "" {
 			continue
+		}
+		if wrote {
+			b.WriteByte('\n')
 		}
 		b.WriteString("> ")
 		b.WriteString(text)
@@ -92,6 +93,7 @@ func HighlightsMarkdown(highlights []readeck.Highlight) string {
 		b.WriteString("- Highlight ID: `")
 		b.WriteString(h.ID)
 		b.WriteString("`\n")
+		wrote = true
 	}
 	return b.String()
 }

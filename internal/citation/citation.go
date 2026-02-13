@@ -217,19 +217,11 @@ func dateParts(t time.Time) map[string]any {
 }
 
 func toJSONString(v any) string {
-	b, err := jsonMarshalIndent(v)
+	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return "{}"
 	}
-	return b
-}
-
-func jsonMarshalIndent(v any) (string, error) {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return string(b), nil
+	return string(b)
 }
 
 func authorOrSite(bookmark readeck.Bookmark) string {

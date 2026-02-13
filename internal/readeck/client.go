@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -448,14 +447,16 @@ func (c *Client) do(ctx context.Context, method, endpoint string, query url.Valu
 	attempt := 0
 	for {
 		attempt++
-		statusCode, requestID, respBytes, reqErr := c.doOnce(ctx, method, endpoint, u.String(), payload)
+		statusCode, requestID, respBytes, reqErr := c.doOnce(ctx, method, endpoint, u.String(), payload, attempt-1)
 		if reqErr != nil {
 			return nil, statusCode, requestID, reqErr
 		}
 
 		if method == http.MethodGet && (statusCode == http.StatusTooManyRequests || statusCode >= 500) && attempt < 4 {
-			backoff := time.Duration(math.Pow(2, float64(attempt-1))*200) * time.Millisecond
-			time.Sleep(backoff)
+			backoff := retryBackoff(attempt)
+			if err := waitForRetry(ctx, backoff); err != nil {
+				return nil, statusCode, requestID, err
+			}
 			continue
 		}
 
@@ -471,7 +472,7 @@ func (c *Client) do(ctx context.Context, method, endpoint string, query url.Valu
 	}
 }
 
-func (c *Client) doOnce(ctx context.Context, method, endpoint, fullURL string, payload []byte) (int, string, []byte, error) {
+func (c *Client) doOnce(ctx context.Context, method, endpoint, fullURL string, payload []byte, retries int) (int, string, []byte, error) {
 	var body io.Reader
 	if len(payload) > 0 {
 		body = bytes.NewReader(payload)
@@ -491,7 +492,7 @@ func (c *Client) doOnce(ctx context.Context, method, endpoint, fullURL string, p
 	start := time.Now()
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		c.logRequest(ctx, method, endpoint, 0, time.Since(start), 0, 0)
+		c.logRequest(ctx, method, endpoint, 0, time.Since(start), 0, retries)
 		return 0, "", nil, err
 	}
 	defer resp.Body.Close()
@@ -502,7 +503,7 @@ func (c *Client) doOnce(ctx context.Context, method, endpoint, fullURL string, p
 	}
 
 	requestID := firstNonEmpty(resp.Header.Get("X-Request-Id"), resp.Header.Get("X-Request-ID"))
-	c.logRequest(ctx, method, endpoint, resp.StatusCode, time.Since(start), len(respBytes), 0)
+	c.logRequest(ctx, method, endpoint, resp.StatusCode, time.Since(start), len(respBytes), retries)
 
 	return resp.StatusCode, requestID, respBytes, nil
 }
@@ -575,6 +576,9 @@ func sortSummaries(items []BookmarkSummary, mode SortMode) {
 	if mode == "" {
 		mode = SortUpdatedDesc
 	}
+	if mode == SortRelevance {
+		return
+	}
 
 	sort.SliceStable(items, func(i, j int) bool {
 		left := items[i]
@@ -584,8 +588,6 @@ func sortSummaries(items []BookmarkSummary, mode SortMode) {
 			return left.PublishedAt > right.PublishedAt
 		case SortCreatedDesc:
 			return left.CreatedAt > right.CreatedAt
-		case SortRelevance:
-			return false
 		default:
 			return left.UpdatedAt > right.UpdatedAt
 		}
@@ -640,4 +642,21 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func retryBackoff(attempt int) time.Duration {
+	// attempt is 1-based in caller; retries start after first attempt.
+	return 200 * time.Millisecond * time.Duration(1<<(attempt-1))
+}
+
+func waitForRetry(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
