@@ -34,11 +34,22 @@ Set environment variables:
 - `READECK_TIMEOUT_SECONDS` — optional (default: `20`)
 - `READECK_USER_AGENT` — optional (default: `readeck-mcp/0.1`)
 - `READECK_VERIFY_TLS` — optional (default: `true`)
+- `MCP_TRANSPORT` — optional (`stdio` default; `http`/`streamable-http` for remote transport)
+- `MCP_HTTP_ADDR` — optional (default: `127.0.0.1:8080`)
+- `MCP_HTTP_PATH` — optional (default: `/mcp`)
+- `MCP_HTTP_AUTH_TOKEN` — optional bearer token required for HTTP requests
+- `MCP_ALLOWED_ORIGINS` — optional comma-separated allowlist for `Origin` header checks
 
 ## Quick start
 
 ```shell
 go run ./cmd/readeck-mcp
+```
+
+HTTP transport mode:
+
+```shell
+MCP_TRANSPORT=http MCP_HTTP_ADDR=:8080 MCP_HTTP_PATH=/mcp go run ./cmd/readeck-mcp
 ```
 
 ## Project layout

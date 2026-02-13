@@ -25,7 +25,16 @@ func main() {
 
 	client := readeck.NewClient(cfg, logger)
 	server := mcp.NewServer(cfg, client, logger)
-	if err := server.Run(ctx); err != nil {
-		logger.Fatalf("server stopped with error: %v", err)
+	var errRun error
+	switch cfg.Transport {
+	case "http", "streamable-http":
+		logger.Printf("starting MCP HTTP transport on %s%s", cfg.HTTPAddr, cfg.HTTPPath)
+		errRun = server.RunHTTP(ctx)
+	default:
+		logger.Printf("starting MCP stdio transport")
+		errRun = server.Run(ctx)
+	}
+	if errRun != nil {
+		logger.Fatalf("server stopped with error: %v", errRun)
 	}
 }

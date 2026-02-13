@@ -332,9 +332,7 @@ func (c *Client) fetchContent(ctx context.Context, id string) (string, string, e
 }
 
 func normalizeSearchOptions(opts SearchOptions, maxPageSize int) SearchOptions {
-	if opts.Archived == "" {
-		opts.Archived = ArchivedExclude
-	}
+	opts.Archived = normalizeArchivedMode(opts.Archived)
 	if opts.Sort == "" {
 		opts.Sort = SortUpdatedDesc
 	}
@@ -346,6 +344,15 @@ func normalizeSearchOptions(opts SearchOptions, maxPageSize int) SearchOptions {
 	}
 	opts.Labels = normalizeLabels(opts.Labels)
 	return opts
+}
+
+func normalizeArchivedMode(mode ArchivedMode) ArchivedMode {
+	switch mode {
+	case ArchivedExclude, ArchivedInclude, ArchivedOnly:
+		return mode
+	default:
+		return ArchivedExclude
+	}
 }
 
 func buildSearchQuery(opts SearchOptions) url.Values {

@@ -13,22 +13,29 @@ import (
 )
 
 type Config struct {
-	BaseURL       *url.URL
-	APIToken      string
-	Timeout       time.Duration
-	UserAgent     string
-	VerifyTLS     bool
-	MaxPageSize   int
-	APIBaseURL    string
-	ServerName    string
-	ServerVersion string
-	Protocol      string
+	APIToken       string
+	Timeout        time.Duration
+	UserAgent      string
+	VerifyTLS      bool
+	MaxPageSize    int
+	APIBaseURL     string
+	ServerName     string
+	ServerVersion  string
+	Protocol       string
+	Transport      string
+	HTTPAddr       string
+	HTTPPath       string
+	HTTPAuthToken  string
+	AllowedOrigins []string
 }
 
 const (
 	defaultTimeoutSeconds = 20
 	defaultUserAgent      = "readeck-mcp/0.1"
 	defaultMaxPageSize    = 100
+	defaultTransport      = "stdio"
+	defaultHTTPAddr       = "127.0.0.1:8080"
+	defaultHTTPPath       = "/mcp"
 )
 
 func Load() (Config, error) {
@@ -79,20 +86,50 @@ func Load() (Config, error) {
 		userAgent = defaultUserAgent
 	}
 
+	transport := strings.ToLower(strings.TrimSpace(os.Getenv("MCP_TRANSPORT")))
+	if transport == "" {
+		transport = defaultTransport
+	}
+	switch transport {
+	case "stdio", "http", "streamable-http":
+	default:
+		return Config{}, errors.New("MCP_TRANSPORT must be one of: stdio, http, streamable-http")
+	}
+
+	httpAddr := strings.TrimSpace(os.Getenv("MCP_HTTP_ADDR"))
+	if httpAddr == "" {
+		httpAddr = defaultHTTPAddr
+	}
+
+	httpPath := strings.TrimSpace(os.Getenv("MCP_HTTP_PATH"))
+	if httpPath == "" {
+		httpPath = defaultHTTPPath
+	}
+	if !strings.HasPrefix(httpPath, "/") {
+		httpPath = "/" + httpPath
+	}
+
+	httpAuthToken := strings.TrimSpace(os.Getenv("MCP_HTTP_AUTH_TOKEN"))
+	allowedOrigins := parseCSV(os.Getenv("MCP_ALLOWED_ORIGINS"))
+
 	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
 	apiBase := strings.TrimRight(baseURL.String(), "/") + "/api"
 
 	cfg := Config{
-		BaseURL:       baseURL,
-		APIToken:      token,
-		Timeout:       time.Duration(timeoutSeconds) * time.Second,
-		UserAgent:     userAgent,
-		VerifyTLS:     verifyTLS,
-		MaxPageSize:   maxPageSize,
-		APIBaseURL:    apiBase,
-		ServerName:    "readeck-mcp",
-		ServerVersion: "0.1.0",
-		Protocol:      "2025-06-18",
+		APIToken:       token,
+		Timeout:        time.Duration(timeoutSeconds) * time.Second,
+		UserAgent:      userAgent,
+		VerifyTLS:      verifyTLS,
+		MaxPageSize:    maxPageSize,
+		APIBaseURL:     apiBase,
+		ServerName:     "readeck-mcp",
+		ServerVersion:  "0.1.0",
+		Protocol:       "2025-06-18",
+		Transport:      transport,
+		HTTPAddr:       httpAddr,
+		HTTPPath:       httpPath,
+		HTTPAuthToken:  httpAuthToken,
+		AllowedOrigins: allowedOrigins,
 	}
 	return cfg, nil
 }
@@ -142,4 +179,20 @@ func validateScheme(u *url.URL) error {
 		return nil
 	}
 	return errors.New("READECK_BASE_URL must use https unless pointing to localhost")
+}
+
+func parseCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		s := strings.TrimSpace(p)
+		if s == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
 }
