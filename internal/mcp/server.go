@@ -165,7 +165,7 @@ func (s *Server) handleToolsList(req rpcRequest) error {
 		},
 		{
 			"name":        "readeck.highlights.list",
-			"description": "List highlights for a bookmark.",
+			"description": "List annotations/highlights globally or per bookmark, with optional date filtering.",
 			"inputSchema": highlightsListInputSchema(),
 		},
 		{
@@ -315,15 +315,22 @@ func (s *Server) executeTool(ctx context.Context, name string, args json.RawMess
 		var in struct {
 			BookmarkID string `json:"bookmark_id"`
 			Limit      int    `json:"limit"`
-			Cursor     string `json:"cursor"`
+			Offset     int    `json:"offset"`
+			Date       string `json:"date"`
+			DateFrom   string `json:"date_from"`
+			DateTo     string `json:"date_to"`
 		}
 		if err := decodeArgs(args, &in); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(in.BookmarkID) == "" {
-			return nil, newInputError("bookmark_id is required")
+		if in.Offset < 0 {
+			return nil, newInputError("offset must be >= 0")
 		}
-		return s.client.ListHighlights(ctx, in.BookmarkID, in.Limit, in.Cursor)
+		dateFilter, err := parseHighlightDateFilter(in.Date, in.DateFrom, in.DateTo)
+		if err != nil {
+			return nil, newInputError(err.Error())
+		}
+		return s.listHighlights(ctx, in.BookmarkID, in.Limit, in.Offset, dateFilter)
 
 	case "readeck.cite":
 		var in struct {
@@ -713,6 +720,187 @@ type parsedURI struct {
 	Kind string
 }
 
+type highlightDateFilter struct {
+	Start time.Time
+	End   time.Time
+}
+
+func (f highlightDateFilter) enabled() bool {
+	return !f.Start.IsZero() || !f.End.IsZero()
+}
+
+func (s *Server) listHighlights(ctx context.Context, bookmarkID string, limit, offset int, filter highlightDateFilter) (readeck.HighlightListResult, error) {
+	if !filter.enabled() {
+		return s.client.ListHighlights(ctx, bookmarkID, limit, offset)
+	}
+
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	batchSize := limit
+	if batchSize < 100 {
+		batchSize = 100
+	}
+	if batchSize > 500 {
+		batchSize = 500
+	}
+
+	scanOffset := 0
+	filteredSeen := 0
+	out := make([]readeck.Highlight, 0, limit)
+	hasMore := false
+
+	for {
+		page, err := s.client.ListHighlights(ctx, bookmarkID, batchSize, scanOffset)
+		if err != nil {
+			return readeck.HighlightListResult{}, err
+		}
+		if len(page.Highlights) == 0 {
+			break
+		}
+
+		for _, h := range page.Highlights {
+			if !highlightMatchesDateFilter(h, filter) {
+				continue
+			}
+			if filteredSeen < offset {
+				filteredSeen++
+				continue
+			}
+			if len(out) >= limit {
+				hasMore = true
+				break
+			}
+			out = append(out, h)
+			filteredSeen++
+		}
+		if hasMore {
+			break
+		}
+
+		nextOffset, ok := parseNonNegativeInt(page.NextCursor)
+		if !ok {
+			if len(page.Highlights) < batchSize {
+				break
+			}
+			nextOffset = scanOffset + len(page.Highlights)
+		}
+		if nextOffset <= scanOffset {
+			break
+		}
+		scanOffset = nextOffset
+	}
+
+	nextCursor := ""
+	if hasMore {
+		nextCursor = strconv.Itoa(offset + len(out))
+	}
+	return readeck.HighlightListResult{Highlights: out, NextCursor: nextCursor}, nil
+}
+
+func parseHighlightDateFilter(date, dateFrom, dateTo string) (highlightDateFilter, error) {
+	date = strings.TrimSpace(date)
+	dateFrom = strings.TrimSpace(dateFrom)
+	dateTo = strings.TrimSpace(dateTo)
+
+	if date != "" && (dateFrom != "" || dateTo != "") {
+		return highlightDateFilter{}, errors.New("date cannot be combined with date_from/date_to")
+	}
+
+	if date != "" {
+		day, err := parseISODate(date)
+		if err != nil {
+			return highlightDateFilter{}, errors.New("date must be YYYY-MM-DD")
+		}
+		return highlightDateFilter{
+			Start: day,
+			End:   day.Add(24 * time.Hour),
+		}, nil
+	}
+
+	var filter highlightDateFilter
+	if dateFrom != "" {
+		day, err := parseISODate(dateFrom)
+		if err != nil {
+			return highlightDateFilter{}, errors.New("date_from must be YYYY-MM-DD")
+		}
+		filter.Start = day
+	}
+	if dateTo != "" {
+		day, err := parseISODate(dateTo)
+		if err != nil {
+			return highlightDateFilter{}, errors.New("date_to must be YYYY-MM-DD")
+		}
+		filter.End = day.Add(24 * time.Hour)
+	}
+	if !filter.Start.IsZero() && !filter.End.IsZero() && !filter.Start.Before(filter.End) {
+		return highlightDateFilter{}, errors.New("date_from must be <= date_to")
+	}
+	return filter, nil
+}
+
+func parseISODate(raw string) (time.Time, error) {
+	parsed, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return parsed.UTC(), nil
+}
+
+func parseHighlightTimestamp(raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, errors.New("empty timestamp")
+	}
+
+	if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return parsed.UTC(), nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+		return parsed.UTC(), nil
+	}
+	if parsed, err := time.ParseInLocation("2006-01-02 15:04:05", raw, time.UTC); err == nil {
+		return parsed.UTC(), nil
+	}
+	if parsed, err := parseISODate(raw); err == nil {
+		return parsed.UTC(), nil
+	}
+	return time.Time{}, errors.New("unsupported timestamp format")
+}
+
+func highlightMatchesDateFilter(h readeck.Highlight, filter highlightDateFilter) bool {
+	if !filter.enabled() {
+		return true
+	}
+	createdAt, err := parseHighlightTimestamp(h.CreatedAt)
+	if err != nil {
+		return false
+	}
+	if !filter.Start.IsZero() && createdAt.Before(filter.Start) {
+		return false
+	}
+	if !filter.End.IsZero() && !createdAt.Before(filter.End) {
+		return false
+	}
+	return true
+}
+
+func parseNonNegativeInt(raw string) (int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v < 0 {
+		return 0, false
+	}
+	return v, true
+}
+
 func parseReadeckURI(raw string) (parsedURI, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -829,12 +1017,35 @@ func labelsSetInputSchema() map[string]any {
 
 func highlightsListInputSchema() map[string]any {
 	return map[string]any{
-		"type":     "object",
-		"required": []string{"bookmark_id"},
+		"type":        "object",
+		"description": "When bookmark_id is omitted, returns a global annotations feed across all bookmarks. Date filters are applied by this MCP server.",
 		"properties": map[string]any{
-			"bookmark_id": map[string]any{"type": "string"},
-			"limit":       map[string]any{"type": "integer", "minimum": 1},
-			"cursor":      map[string]any{"type": "string"},
+			"bookmark_id": map[string]any{
+				"type":        "string",
+				"description": "Optional bookmark ID for bookmark-scoped annotations.",
+			},
+			"limit": map[string]any{
+				"type":        "integer",
+				"minimum":     1,
+				"description": "Page size.",
+			},
+			"offset": map[string]any{
+				"type":        "integer",
+				"minimum":     0,
+				"description": "Zero-based pagination offset.",
+			},
+			"date": map[string]any{
+				"type":        "string",
+				"description": "Filter annotations by a specific UTC date (YYYY-MM-DD).",
+			},
+			"date_from": map[string]any{
+				"type":        "string",
+				"description": "Filter annotations created on or after this UTC date (YYYY-MM-DD).",
+			},
+			"date_to": map[string]any{
+				"type":        "string",
+				"description": "Filter annotations created on or before this UTC date (YYYY-MM-DD).",
+			},
 		},
 	}
 }

@@ -155,7 +155,7 @@ func (s *Server) executeRPCOverHTTP(ctx context.Context, req rpcRequest) rpcResp
 			{"name": "readeck.archive", "description": "Archive or unarchive a bookmark.", "inputSchema": archiveInputSchema()},
 			{"name": "readeck.labels.list", "description": "List all labels.", "inputSchema": labelsListInputSchema()},
 			{"name": "readeck.labels.set", "description": "Replace labels on a bookmark.", "inputSchema": labelsSetInputSchema()},
-			{"name": "readeck.highlights.list", "description": "List highlights for a bookmark.", "inputSchema": highlightsListInputSchema()},
+			{"name": "readeck.highlights.list", "description": "List annotations/highlights globally or per bookmark, with optional date filtering.", "inputSchema": highlightsListInputSchema()},
 			{"name": "readeck.cite", "description": "Generate citations for a bookmark in multiple styles.", "inputSchema": citeInputSchema()},
 		}}
 	case "tools/call":

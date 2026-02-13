@@ -116,7 +116,7 @@ func (c *Client) GetBookmark(ctx context.Context, id string, include IncludeOpti
 	}
 
 	if include.Highlights {
-		highlights, err := c.ListHighlights(ctx, id, defaultListLimit, "")
+		highlights, err := c.ListHighlights(ctx, id, defaultListLimit, 0)
 		if err == nil {
 			bookmark.Highlights = highlights.Highlights
 		}
@@ -251,40 +251,29 @@ func (c *Client) SetLabels(ctx context.Context, id string, labels []string) (Set
 	return result, nil
 }
 
-func (c *Client) ListHighlights(ctx context.Context, bookmarkID string, limit int, cursor string) (HighlightListResult, error) {
-	if strings.TrimSpace(bookmarkID) == "" {
-		return HighlightListResult{}, errors.New("bookmark_id is required")
-	}
+func (c *Client) ListHighlights(ctx context.Context, bookmarkID string, limit, offset int) (HighlightListResult, error) {
 	if limit <= 0 {
 		limit = defaultListLimit
 	}
 	if limit > maxLabelsLimit {
 		limit = maxLabelsLimit
 	}
+	if offset < 0 {
+		offset = 0
+	}
 
 	params := url.Values{}
 	params.Set("limit", strconv.Itoa(limit))
-	if cursor != "" {
-		params.Set("cursor", cursor)
-	}
+	params.Set("offset", strconv.Itoa(offset))
 
-	respMap, err := c.getObject(ctx, "/bookmarks/"+url.PathEscape(bookmarkID)+"/highlights", params)
-	if err != nil {
-		if httpErr := new(HTTPError); errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			respMap, err = c.getObject(ctx, "/bookmarks/"+url.PathEscape(bookmarkID)+"/annotations", params)
-		}
+	if strings.TrimSpace(bookmarkID) == "" {
+		return c.listHighlights(ctx, "/bookmarks/annotations", params, "")
 	}
-	if err != nil {
-		if httpErr := new(HTTPError); errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			params.Set("bookmark_id", bookmarkID)
-			respMap, err = c.getObject(ctx, "/bookmarks/annotations", params)
-		}
-	}
-	if err != nil {
-		if httpErr := new(HTTPError); errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			respMap, err = c.getObject(ctx, "/highlights", params)
-		}
-	}
+	return c.listHighlights(ctx, "/bookmarks/"+url.PathEscape(bookmarkID)+"/annotations", params, bookmarkID)
+}
+
+func (c *Client) listHighlights(ctx context.Context, endpoint string, params url.Values, bookmarkID string) (HighlightListResult, error) {
+	respMap, err := c.getObject(ctx, endpoint, params)
 	if err != nil {
 		return HighlightListResult{}, err
 	}
@@ -299,10 +288,15 @@ func (c *Client) ListHighlights(ctx context.Context, bookmarkID string, limit in
 		if h.BookmarkID == "" {
 			h.BookmarkID = bookmarkID
 		}
-		if h.BookmarkID != bookmarkID {
-			continue
-		}
 		highlights = append(highlights, h)
+	}
+
+	if next == "" {
+		offset, _ := strconv.Atoi(params.Get("offset"))
+		limit, _ := strconv.Atoi(params.Get("limit"))
+		if len(highlights) == limit {
+			next = strconv.Itoa(offset + len(highlights))
+		}
 	}
 
 	return HighlightListResult{Highlights: highlights, NextCursor: next}, nil
